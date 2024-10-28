@@ -51,11 +51,22 @@ class WebApp {
     var isEnableZooming = false
     var isBiometricProtection = false
     var isAllowMediaPlaybackInBackground = false
+    var order = 0
+    var alwaysUseFallbackContextMenu = false
+
+    constructor(url: String, id: Int, order: Int) {
+        title = url.replace("http://", "").replace("https://", "").replace("www.", "")
+        baseUrl = url
+        this.ID = id
+        this.order = order
+        initDefaultSettings()
+    }
 
     constructor(url: String, id: Int) {
         title = url.replace("http://", "").replace("https://", "").replace("www.", "")
         baseUrl = url
         this.ID = id
+        this.order = 0
         initDefaultSettings()
     }
 
@@ -104,6 +115,8 @@ class WebApp {
         isEnableZooming = other.isEnableZooming
         isBiometricProtection = other.isBiometricProtection
         isAllowMediaPlaybackInBackground = other.isAllowMediaPlaybackInBackground
+        order = other.order
+        alwaysUseFallbackContextMenu = other.alwaysUseFallbackContextMenu
     }
 
     private fun initDefaultSettings() {

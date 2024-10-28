@@ -51,6 +51,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.ShareCompat;
 import androidx.core.content.ContextCompat;
@@ -71,6 +72,8 @@ import com.cylonid.nativealpha.util.WebViewLauncher;
 import com.google.android.material.snackbar.Snackbar;
 import com.jakewharton.processphoenix.ProcessPhoenix;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -178,12 +181,13 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
 
         if (webapp.isShowFullscreen()) {
             this.hideSystemBars();
-        } else {
+        } else if(DataManager.getInstance().getSettings().getAlwaysShowSoftwareButtons()) {
             this.showSystemBars();
         }
         wv.setWebViewClient(new CustomBrowser());
         wv.getSettings().setSafeBrowsingEnabled(false);
         wv.getSettings().setDomStorageEnabled(true);
+        wv.getSettings().setDatabaseEnabled(true);
         wv.getSettings().setAllowFileAccess(true);
         wv.getSettings().setBlockNetworkLoads(false);
 //        wv.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
@@ -219,6 +223,7 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
         loadURL(wv, url);
         wv.setWebChromeClient(new CustomWebChromeClient());
         wv.setOnLongClickListener(view -> {
+            if(webapp.getAlwaysUseFallbackContextMenu()) return false;
             if(fallbackToDefaultLongClickBehaviour) {
                 fallbackToDefaultLongClickBehaviour = false;
                 return false;
@@ -235,8 +240,22 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
                 startActivity(i);
             } else {
                 if(dl_url != null && !dl_url.equals("")) {
-                  DownloadManager.Request request = new DownloadManager.Request(
-                          Uri.parse(dl_url));
+                    if(dl_url.startsWith("blob:")) {
+                        dl_url = dl_url.replace("blob:", "");
+                        try {
+                            dl_url = URLDecoder.decode(dl_url, "UTF-8");
+                        } catch (UnsupportedEncodingException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    DownloadManager.Request request = null;
+                    try {
+                        request = new DownloadManager.Request(
+                                Uri.parse(dl_url));
+                    }
+                    catch(Exception e) {
+                        Utility.showInfoSnackbar(this, getString(R.string.file_download), Snackbar.LENGTH_SHORT);
+                    }
                   String file_name = Utility.getFileNameFromDownload(dl_url, contentDisposition, mimeType);
 
                   request.setMimeType(mimeType);
@@ -336,30 +355,53 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
         });
     }
 
+    @SuppressLint("RequiresFeature")
     private void setDarkModeIfNeeded() {
+        if (!BuildConfig.FLAVOR.equals("extended")) {
+            return;
+        }
+        if (Utility.isNightMode(this)) {
+            wv.setBackgroundColor(Color.BLACK);
+        } else {
+            wv.setBackgroundColor(Color.WHITE);
+        }
+
         boolean needsForcedDarkMode = webapp.isUseTimespanDarkMode() &&
                 Utility.isInInterval(Utility.convertStringToCalendar(webapp.getTimespanDarkModeBegin()), Calendar.getInstance(), Utility.convertStringToCalendar(webapp.getTimespanDarkModeEnd()))
                 || (!webapp.isUseTimespanDarkMode() && webapp.isForceDarkMode());
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (Utility.isNightMode(this) || needsForcedDarkMode) {
-                wv.getSettings().setForceDark(WebSettings.FORCE_DARK_ON);
-            } else {
-                wv.getSettings().setForceDark(WebSettings.FORCE_DARK_OFF);
-            }
+            boolean isForceDarkSupported = WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK);
+            boolean isForceDarkStrategySupported = WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY);
+            boolean isAlgorithmicDarkeningSupported = WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING);
 
             if (needsForcedDarkMode) {
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                wv.setForceDarkAllowed(true);
+                getDelegate().setLocalNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                if (isForceDarkSupported) {
+                    WebSettingsCompat.setForceDark(wv.getSettings(), WebSettingsCompat.FORCE_DARK_ON);
+                }
+                if (isForceDarkStrategySupported) {
                     WebSettingsCompat.setForceDarkStrategy(wv.getSettings(), WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING);
                 }
-                wv.setBackgroundColor(Color.BLACK);
+                if (isAlgorithmicDarkeningSupported) {
+                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.getSettings(), true);
+                }
             } else {
-                if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                getDelegate().setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+
+                if (isForceDarkSupported) {
+                    WebSettingsCompat.setForceDark(wv.getSettings(), WebSettingsCompat.FORCE_DARK_OFF);
+                }
+                if (isForceDarkStrategySupported) {
                     WebSettingsCompat.setForceDarkStrategy(wv.getSettings(), WebSettingsCompat.DARK_STRATEGY_WEB_THEME_DARKENING_ONLY);
                 }
-                wv.setBackgroundColor(Color.WHITE);
+                if (isAlgorithmicDarkeningSupported) {
+                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.getSettings(), false);
+                }
             }
         }
+
     }
 
     @SuppressLint("NonConstantResourceId")
@@ -401,7 +443,7 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
                 case R.id.cmItemCloseWebApp:
                     finishAndRemoveTask();
                     return true;
-                case R.id.cmSelectText:
+                case R.id.cmFallbackContextmenuTemp:
                     fallbackToDefaultLongClickBehaviour = true;
                     return true;
                 case R.id.cmMainMenu:
@@ -472,8 +514,9 @@ public class WebViewActivity extends AppCompatActivity implements EasyPermission
     @Override
     protected void onPause() {
         super.onPause();
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
 
-        wv.evaluateJavascript("document.querySelectorAll('audio').forEach(x => x.pause());", null);
+        wv.evaluateJavascript("document.querySelectorAll('audio').forEach(x => x.pause());document.querySelectorAll('video').forEach(x => x.pause());", null);
         wv.onPause();
         wv.pauseTimers();
         if(mPopupMenu != null) mPopupMenu.dismiss();
